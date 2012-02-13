@@ -1,9 +1,12 @@
 # encoding: UTF-8
+#
+
+require 'algorithms'
 
 class Chabble
   LETTER_COUNT = {
-    a: 7, b: 2, c: 2, d: 5, e: 18, f: 2, g: 3, h: 2, i: 4, j: 2, k: 3, l: 3, m: 3, 
-    n: 11, o: 6, p: 2, q: 1, r: 5, s: 5, t: 5, u: 3, v: 2, w: 2, x: 1, y: 1, z: 2, _: 2 
+    a: 7, b: 2, c: 2, d: 5, e: 18, f: 2, g: 3, h: 2, i: 4, j: 2, k: 3, l: 3, m: 3,
+    n: 11, o: 6, p: 2, q: 1, r: 5, s: 5, t: 5, u: 3, v: 2, w: 2, x: 1, y: 1, z: 2, _: 2
   }
 
   MULT = Hash.new(1).merge({
@@ -13,19 +16,21 @@ class Chabble
   })
 
   LETTER_VALUES = Hash.new(0).merge({
-    a: 1, b: 4, c: 5, d: 2, e: 1, f: 4, g: 3, h: 4, i: 2, j: 4, k: 3, l: 3, m: 3, 
+    a: 1, b: 4, c: 5, d: 2, e: 1, f: 4, g: 3, h: 4, i: 2, j: 4, k: 3, l: 3, m: 3,
     n: 1, o: 1, p: 4, q: 10, r: 2, s: 2, t: 2, u: 2, v: 4, w: 5, x: 8, y: 8, z: 5
   })
 
 
+  include Containers
 
   def initialize
     @count = Hash.new(0)
-    @word_set = {}
+    @word_set = Trie.new
     @row_points = []
     @col_points = []
     @rows = []
     @cols = []
+    puts "reading word lists"
     read_word_list 'OpenTaal-210G-basis-gekeurd.txt'
     read_word_list 'OpenTaal-210G-flexievormen.txt'
     read_word_list 'tweedriewoorden.txt'
@@ -121,8 +126,8 @@ class Chabble
         s = f.readline 
         next unless s
         s = s.chomp.gsub(/[-']/,'').gsub(/ë/,'e').gsub(/é/,'e')
+        next unless s.length > 3
         next unless s =~ /^[a-z]+$/
-        next unless s.length > 1
         next unless s[/[aeoiu]/]
         @word_set[s] = true
       end
@@ -152,7 +157,7 @@ class Chabble
           next
         end
         permutations(@letters, pattern) do |p|
-          if @word_set.key? p.downcase
+          if @word_set.has_key? p.downcase
             s[j] = '?'
             letter = p[pattern.index('.')]
             (pre[i][j] = {})[letter] =  {:word => p, :score => points(p, pattern, point_map[i][start, pattern.length])}
@@ -180,13 +185,15 @@ class Chabble
           q << c
         end
       end
-      if letters.include?('?')
-        qs = ('a'..'z').map {|c| q.sub(/\?/,c.upcase)}
-      else
-        qs = [q]
-      end
-      
-      qs.each {|q| yield q}
+
+      yield q
+      #if letters.include?('?')
+        #qs = ('a'..'z').map {|c| q.sub(/\?/,c.upcase)}
+      #else
+        #qs = [q]
+      #end
+
+      #qs.each {|q| yield q}
     end
   end
 
@@ -250,7 +257,7 @@ class Chabble
 
         #puts "regex: #{match_regex}"
         found.merge!(match(pattern, start, i, words[i], sec[i], point_map[i], match_regex)) unless pattern == ''
-        
+
         if ['.','?', '!', '*'].include?(s[start])
           start += 1
         else
@@ -270,17 +277,30 @@ class Chabble
     matched[pattern] = true
 
     permutations(letters, pattern) do |p|
-      if p.downcase =~ /#{regex}/ && @word_set.key?(p.downcase)
-        #puts "!found! #{p}"
-        points = points(p, pattern, point_map[start, pattern.length])
+      w = p.downcase
+      next unless w =~ /#{regex}/
+      matches = if w['?']
+        ww = w.gsub(/\?/,'.')
+        puts "? => . #{ww}"
+        @word_set.wildcard(ww)
+      else
+        @word_set[w] ? [w] : []
+      end
+      next if matches.count == 0
+
+      puts "looked for #{w}"
+      puts "found #{matches.inspect}"
+      matches.each do |r|
+        #puts "!found! #{w}"
+        points = points(w, pattern, point_map[start, pattern.length])
         sum = 0
         pattern.each_char.each_with_index do |c, i|
           next unless c == '?'
           #puts "** #{sec[i+start].inspect}, #{p[i]}"
-          sum += sec[i+start][p[i].downcase][:score]
+          sum += sec[i+start][w[i]][:score]
         end
         points += sum
-        results["#{p} #{start}x#{line}"] = points
+        results["#{r} #{start}x#{line}"] = points
       end
     end
 
