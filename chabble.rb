@@ -48,16 +48,22 @@ class Chabble
         @rows[row] = s
         col = 0
         s.each_char do |c|
-          @count[c.to_sym] += 1 if ('a'..'z').include? c
-          @count[:_] += 1 if ('A'..'Z').include? c
           (@cols[col] ||= '') << c
           col += 1
         end
         row += 1
       end
     end
+    count_letters
     @hwords = word_map(@rows)
     @vwords = word_map(@cols)
+  end
+
+  def count_letters
+    ('a'..'z').each do |c|
+      @count[c.to_sym] = @rows.inject(0) {|sum, r| sum + r.count(c) }
+    end
+    @count[:_] = @rows.inject(0) {|sum, r| sum + r.count('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}
   end
 
   def read_board_layout(filename = 'fields.txt')
@@ -73,7 +79,7 @@ class Chabble
         end
         row += 1
       end
-    end 
+    end
   end
 
   # array of words per line. Word is stored at start and end position
@@ -86,7 +92,7 @@ class Chabble
       in_word = false
       (s + '|').each_char.each_with_index do |c, j|
         if in_word
-          if c == '.' || c == '|'
+          if '.?!*|'.include?(c)
             words[i][start] = word
             words[i][j-1] = word
             in_word = false
@@ -94,29 +100,22 @@ class Chabble
             word << c
           end
         else
-          unless c == '.' || c == '|'
+          unless '.?!*|'.include?(c)
             in_word = true
             word = c
             start = j
           end
-        end  
+        end
       end
     end
     words
   end
 
-  def read_letters
-    until @letters
-      puts 'letters: (_: blank)'
-      @letters = gets.chomp
-      exit if @letters.length == 0
-      @letters.downcase!
-      @letters = nil unless @letters =~ /^[a-z_]+$/ && @letters.count('_') <= 2
-    end
-    @letters.each_char do |c|
-      @count[c.to_sym] += 1 if ('a'..'z').include? c
-      @count[:_] += 1 if c == '_'
-    end
+  def letters(input)
+    @letters = input.chomp
+    return if @letters.length == 0
+    @letters.downcase!
+    @letters = nil unless @letters =~ /^[a-z_]+$/ && @letters.count('_') <= 2
   end
 
 
@@ -142,15 +141,16 @@ class Chabble
     lines.each_with_index do |s, i|
       pre[i] = []
       s.each_char.each_with_index do |c, j|
-        next unless c == '.'
+        next unless '.?!*'.include?(c)
+        s[j] = '.'
         if i > 0 && i < 14 && words[j][i-1] && words[j][i+1]
-          pattern = "#{words[j][i-1]}#{c}#{words[j][i+1]}"
+          pattern = "#{words[j][i-1]}.#{words[j][i+1]}"
           start = i - words[j][i-1].length
         elsif i > 0 && words[j][i-1]
-          pattern = "#{words[j][i-1]}#{c}"
+          pattern = "#{words[j][i-1]}."
           start = i - words[j][i-1].length
         elsif i < 14 && words[j][i+1]
-          pattern = "#{c}#{words[j][i+1]}"
+          pattern = ".#{words[j][i+1]}"
           start = i
         elsif point_map[i][j] == '*'
           s[j] = '*'
@@ -169,7 +169,7 @@ class Chabble
         end
         s[j] = '!' if s[j] != '?'
       end
-    end 
+    end
     #puts pre.inspect
     pre
   end
@@ -215,6 +215,13 @@ class Chabble
 
 
   def print_board(new_word = nil)
+
+    if new_word
+      puts
+      puts "Candidate: '#{new_word[:s]}' for #{new_word[:p]} points at (#{new_word[:x]+1},#{new_word[:y]+1}) #{new_word[:d] == :h ? 'horizontal' : 'vertical'}"
+      puts
+    end
+
     0.upto(14) do |i|
       r = ''
       0.upto(14) do |j|
@@ -243,7 +250,7 @@ class Chabble
                  end
           fore = 'white'
         end
-        if '+-|?.*'.include?(c) && new_word 
+        if '+-|?.*'.include?(c) && new_word
           s,d,x,y = new_word[:s], new_word[:d], new_word[:x], new_word[:y]
           if d == :h && y == i && (x...(x+s.length)).include?(j)
             c = s[j - x]
@@ -263,7 +270,7 @@ class Chabble
       end
       puts r
     end
-
+    puts
   end
 
   #start with longest pattern until block
@@ -281,8 +288,9 @@ class Chabble
         j = start
         while j <= 14 do
           break if s[j] == '!'
+          #puts "** #{i},#{j}"
           match_regex << (s[j] == '?' ? "(#{sec[i][j].keys.join('|')})" : (s[j] == '*' ? '.' : s[j]))
-          pattern << s[j] 
+          pattern << s[j]
           break if pattern.count(".?") >= max
           j += 1
         end
@@ -347,8 +355,8 @@ class Chabble
   end
 
   def show(results, num = 10)
-    results.each_pair.sort_by {|k,v| v}.last(num).each do |r|
-      puts "#{r[0]} - #{r[1]}"
+    results.each_pair.sort_by {|k,v| v}.last(num).each_with_index do |r, i|
+      puts "#{num-i}: #{r[0]} - #{r[1]}"
     end
   end
 
@@ -356,37 +364,122 @@ class Chabble
 
   end
 
-  def run
-    read_board_position
-    read_board_layout
-    read_letters
+  def show_remaining_letters
     LETTER_COUNT.each do |k, v|
-      remaining = v - @count[k]
+      remaining = v - @count[k] - @letters.count(k.to_s)
       puts "#{k}: #{remaining}" if remaining > 0
     end
+  end
+
+  def find
     @vom = preprocess @rows, @vwords, @col_points
     @hom = preprocess @cols, @hwords, @row_points
+    h, v = nil, nil
     time = Benchmark.measure do
       puts "horizontal matches"
       h = show find_words(@rows, @hwords, @vom, @row_points)
       puts
       puts "vertical matches"
       v = show find_words(@cols, @vwords, @hom, @col_points)
-      hiword = if h[-1][1] > v[-1][1] 
-        s, xy = h[-1][0].split(' ')
-        x,y = xy.split('x').map &:to_i
-        {x:x, y:y, s:s, d: :h, p: h[-1][1]}
-      else
-        s, yx = v[-1][0].split(' ')
-        y,x = yx.split('x').map &:to_i
-        {x:x, y:y, s:s, d: :v, p: v[-1][1]}
-      end
-      puts
-      puts "Hiscore: '#{hiword[:s]}' for #{hiword[:p]} points at (#{hiword[:x]+1},#{hiword[:y]+1}) #{hiword[:d] == :h ? 'horizontal' : 'vertical'}"
-      puts
-      print_board(hiword)
     end
-    puts time
+    {:h => h, :v => v}
+  end
+
+  def hiscore(results)
+    h = results[:h]
+    v = results[:v]
+    hiword = if h[-1][1] > v[-1][1]
+      s, xy = h[-1][0].split(' ')
+      x,y = xy.split('x').map &:to_i
+      {x:x, y:y, s:s, d: :h, p: h[-1][1]}
+    else
+      s, yx = v[-1][0].split(' ')
+      y,x = yx.split('x').map &:to_i
+      {x:x, y:y, s:s, d: :v, p: v[-1][1]}
+    end
+    hiword
+  end
+
+  def get_word(results, cmd, pos)
+    dir = cmd.to_sym
+    top_list = results[cmd.to_sym]
+    return nil unless top_list
+    w = top_list[-pos.to_i]
+    return nil unless w
+
+    s, xy = w[0].split(' ')
+    x,y = xy.split('x').map &:to_i
+    y,x = x,y if dir == :v
+    res = {x:x, y:y, s:s, d: dir, p: w[1]}
+    #res
+  end
+
+  def add_word(word)
+    par, ort = (word[:d] == :h ? [@rows, @cols] : [@cols, @rows])
+    x, y = (word[:d] == :h ? [word[:x], word[:y]] : [word[:y], word[:x]])
+    word[:s].each_char.each_with_index do |c, i|
+      par[y][x+i] = c if '.*?!'.include?(par[y][x+i])
+      ort[x+i][y] = c if '.*?!'.include?(ort[x+i][y])
+    end
+    @hwords = word_map(@rows)
+    @vwords = word_map(@cols)
+    count_letters
+  end
+
+  def help
+    puts 'b, board <file>: load a new board'
+    puts '[l, letters] <letters>: your letters (_ means blank)'
+    puts 'v<num>, h<num>: show a found word on the board'
+    puts 'a, add: add the currently shown word to the board'
+    puts 'x, exit, q, quit: exit chabble'
+  end
+
+  def run
+    read_board_position
+    read_board_layout
+    help
+
+    cmd = ''
+    cur_word = nil
+    found_words = {}
+    loop do
+      input = Readline::readline('chabble>')
+      cmd, args = input.split(/\s+/,2)
+      Readline::HISTORY.push "#{cmd} #{args}"
+      case cmd
+      when 'b', 'board'
+        found_words = {}
+        read_board_position args || 'board.txt'
+      when 'l', 'letters'
+        letters(args)
+        show_remaining_letters
+        found_words = find
+        cur_word = hiscore(found_words)
+        print_board(cur_word)
+      when 'v', 'h'
+      when /^(v|h)\s*([1-9]|10)$/
+        cur_word = get_word(found_words, $1, $2)
+        print_board(cur_word)
+      when 'a', 'add'
+        add_word(cur_word) if cur_word
+        print_board
+        found_words = {}
+      when '?', 'h', 'help'
+        help
+      when 'exit', 'x', 'quit', 'q'
+        break
+      when /^[a-zA-Z_]{1,7}$/
+        letters(cmd)
+        show_remaining_letters
+        found_words = find
+        cur_word = hiscore(found_words)
+        print_board(cur_word)
+      else
+        puts "Sorry, what??"
+      end
+
+    end
+    puts 'Bye!'
   end
 
 end
